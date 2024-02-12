@@ -10,44 +10,63 @@
 #include <sstream>
 
 // Define a custom type for the flow data
-using SubnetData = std::tuple<int, int, int, int>; // qos, id, hop, flowId
+using SubnetData = std::tuple<int, int, int, std::string>; // qos, id, hop, flowId
 
 using TimeData = std::tuple<int, int, int, int>; // tsai, tdi, tstcd, tci
 
-using FlowData = std::tuple<int, int, int, int, int, int>; // hop, id, qos, k, tsai, flowId
+using FlowData = std::tuple<int, int, int, int, int, std::string>; // hop, id, qos, k, tsai, flowId
 
 // Define the maps to hold vectors of flows and times
-std::map<std::string, std::vector<FlowData>> egressFlowset;
-std::map<std::string, std::vector<TimeData>> egressTimeset;
-std::map<std::string, std::vector<FlowData>> Flowset;
-std::map<std::string, std::vector<TimeData>> Timeset;
-
-using SubNetworkType = std::map<std::string, std::vector<SubnetData>>;
+std::map<std::vector<int>, std::vector<FlowData>> egressFlowset;
+std::map<std::vector<int>, std::vector<TimeData>> egressTimeset;
+std::map<std::vector<int>, std::vector<FlowData>> Flowset;
+std::map<std::vector<int>, std::vector<TimeData>> Timeset;
 
 std::map<int, std::vector<std::vector<int>>> allocationTS;
 std::map<int, std::vector<std::vector<int>>> talkerResults;
 std::map<int, std::vector<std::string>> GCL;
 
 // Assuming the existence of these types based on the Python code
-using FlowIdRecord = std::map<int, int>;
-using ShortestPathType = std::string;
+using FlowIdRecord = std::vector<std::string>;
+using ShortestPathType = std::vector<int>;
 using SrcDstType = std::vector<int>;
 using QosType = std::vector<int>;
 using ReverseLookupType = std::map<int, int>;
-using FlowSrcDstType = std::map<int, std::vector<int>>;
+using FlowSrcDstType = std::map<std::string, std::vector<int>>;
+
+
+
+using SubNetworkType = std::map<std::vector<int>, std::vector<SubnetData>>;
 
 SubNetworkType subNetwork;
 FlowSrcDstType flowSrcDst;
+
+// Define the maps to hold vectors of flows and times
+//extern std::map<std::vector<int>, std::vector<SubnetData>> subNetwork;
+//extern std::map<std::string, std::vector<int>> flowSrcDst;
 	
 // Assuming userDefined is a global or externally provide4d variable
 bool userDefined = true; // You can change this to false to test the other condition
 
+std::tuple<int, int, int> convertVectorToTuple(const std::vector<int>& vec) {
+    if (vec.size() != 3) {
+        throw std::invalid_argument("Vector size must be exactly 3 to convert to a tuple<int, int, int>.");
+    }
+    return std::make_tuple(vec[0], vec[1], vec[2]);
+}
 
-
-SubNetworkType TopologyPartition(const ShortestPathType& ShortestPath, const SrcDstType& SrcDst, int Pos, const QosType& Qos, const ReverseLookupType& reverse_lookup, const FlowIdRecord& flowIdRecord) {
+// Function implementation
+std::map<std::vector<int>, std::vector<SubnetData>> TopologyPartition(
+    const std::vector<int>& ShortestPath,
+    const std::vector<int>& SrcDst,
+    int Pos,
+    const std::vector<int>& Qos,
+    const std::map<int, int>& reverse_lookup,
+    const std::vector<std::string>& flowIdRecord) {
     
     int lenLista = ShortestPath.size();
-    int flowId = flowIdRecord.at(Pos);
+
+    std::string flowId = flowIdRecord[Pos];
     int srcEs = ShortestPath[0];
     int dstEs = ShortestPath[lenLista - 1];
 
@@ -61,20 +80,20 @@ SubNetworkType TopologyPartition(const ShortestPathType& ShortestPath, const Src
 
     int startIndex = 0;
     int lenDictb = reverse_lookup.size();
-    for (int i = 0; i < ShortestPath.size(); ++i) {
-        int x = ShortestPath[i];
+    for (size_t i = 0; i < ShortestPath.size(); ++i) {
         if (i == 0) {
             continue;
         }
-        if (reverse_lookup.find(x) != reverse_lookup.end()) {
+        if (reverse_lookup.find(ShortestPath[i]) != reverse_lookup.end()) {
             int qos;
             if (lenLista == i + 1 - startIndex) {
                 qos = Qos[Pos];
             } else {
                 qos = Qos[Pos] * (i + 1 - startIndex) / (lenLista + 1);
             }
-            ShortestPathType pathSegment(ShortestPath.begin() + startIndex, ShortestPath.begin() + i + 1);
+            std::vector<int> pathSegment(ShortestPath.begin() + startIndex, ShortestPath.begin() + i + 1);
             subNetwork[pathSegment].push_back(std::make_tuple(qos, Pos + 1, startIndex + 1, flowId));
+
             startIndex = i;
             --lenDictb;
         }
@@ -85,7 +104,7 @@ SubNetworkType TopologyPartition(const ShortestPathType& ShortestPath, const Src
             } else {
                 qos = Qos[Pos] * (lenLista - i) / (lenLista + 1);
             }
-            ShortestPathType pathSegment(ShortestPath.begin() + i, ShortestPath.end());
+            std::vector<int> pathSegment(ShortestPath.begin() + i, ShortestPath.end());
             subNetwork[pathSegment].push_back(std::make_tuple(qos, Pos + 1, i + 1, flowId));
             break;
         }
@@ -112,14 +131,14 @@ std::pair<int, int> DelayCalculation(int HopCnt) {
     }
 }
 
-void assignToEgress(const std::map<std::string, std::vector<FlowData>>& Flowset,
-const std::map<std::string, std::vector<TimeData>>& Timeset) {
+void assignToEgress(const std::map<std::vector<int>, std::vector<FlowData>>& Flowset,
+const std::map<std::vector<int>, std::vector<TimeData>>& Timeset) {
     
     for (const auto& pair : Flowset) {
-        const std::string& sn = pair.first;
+        const std::vector<int>& sn = pair.first;
         const std::vector<FlowData>& flow = pair.second;
 
-        size_t lensn = sn.length();
+        size_t lensn = sn.size();
         if (lensn == 2) {
             for (const auto& f : flow) {
                 egressFlowset[sn].push_back(f);
@@ -127,9 +146,10 @@ const std::map<std::string, std::vector<TimeData>>& Timeset) {
             egressTimeset[sn].push_back(Timeset.at(sn)[0]);
         } else {
             size_t numEgress = lensn - 1;
-            std::string egress;
+            std::vector<int> egress;
             for (size_t cnt = 0; cnt < lensn - 1; ++cnt) {
-                egress = {sn[cnt], sn[cnt + 1]};
+                egress.push_back(sn[cnt]);
+				egress.push_back(sn[cnt + 1]);
                 for (const auto& f : flow) {
                     // Create a modified flow data with incremented hop
                     FlowData modifiedFlow = f;
@@ -142,22 +162,23 @@ const std::map<std::string, std::vector<TimeData>>& Timeset) {
     }
 }
 
-void flowVarsForEgress(const std::map<std::string, std::vector<FlowData>>& Flowset) {
+void flowVarsForEgress(const std::map<std::vector<int>, std::vector<FlowData>>& Flowset) {
     
     for (const auto& pair : Flowset) {
-        const std::string& sn = pair.first;
+        const std::vector<int>& sn = pair.first;
         const std::vector<FlowData>& flow = pair.second;
 
-        size_t lensn = sn.length();
+        size_t lensn = sn.size();
         if (lensn == 2) {
             for (const auto& f : flow) {
                 egressFlowset[sn].push_back(f);
             }
         } else {
             size_t numEgress = lensn - 1;
-            std::string egress;
+            std::vector<int> egress;
             for (size_t cnt = 0; cnt < lensn - 1; ++cnt) {
-                egress = {sn[cnt], sn[cnt + 1]};
+                egress.push_back(sn[cnt]);
+				egress.push_back(sn[cnt + 1]);
                 for (const auto& f : flow) {
                     egressFlowset[egress].push_back(f);
                 }
@@ -169,7 +190,7 @@ void flowVarsForEgress(const std::map<std::string, std::vector<FlowData>>& Flows
 std::vector<int> step1andstep2_CalculateRelatedParameters(const SubNetworkType& subnetwork) {
     int numFlow = 0;
     for (const auto& entry : subnetwork) {
-        const std::string& sn = entry.first;
+        const std::vector<int>& sn = entry.first;
         auto flow = entry.second; // Copy the flow set
 
         // Convert flow list to flow heap
@@ -187,7 +208,7 @@ std::vector<int> step1andstep2_CalculateRelatedParameters(const SubNetworkType& 
             int qos = std::get<0>(flowData);
             int id = std::get<1>(flowData);
             int hop = std::get<2>(flowData);
-            int flowId = std::get<3>(flowData);
+            std::string flowId = std::get<3>(flowData);
 
             if (numFlow <= id) {
                 numFlow = id;
@@ -299,8 +320,79 @@ std::vector<int> convertStrToVector(const std::string& strdata, int flag) {
     return element;
 }
 
+std::pair<bool, std::vector<int>> CheckConflict(const std::vector<int>& FMTITalker, const std::vector<int>& ES_Flow, int cnt) {
+    if (FMTITalker.size() != ES_Flow.size()) {
+        std::cout << "CheckConflict, line 310, Flow number is different, please check the inputs" << std::endl;
+        std::cout << "len of FMTITalker is " << FMTITalker.size() << ", len of ES_Flow is " << ES_Flow.size() << std::endl;
+        exit(1);
+    }
 
-int main() {
+    std::vector<int> check;
+    std::vector<int> modifiedFMTITalker = FMTITalker; // Make a copy to modify
+
+    for (size_t pos = 0; pos < ES_Flow.size(); ++pos) {
+        int checkValue = modifiedFMTITalker[pos] * ES_Flow[pos];
+
+        if (std::count(check.begin(), check.end(), checkValue) != 0) {
+            auto it = std::find(check.begin(), check.end(), checkValue);
+            if (ES_Flow[pos] == ES_Flow[it - check.begin()]) {
+                modifiedFMTITalker[pos] = cnt * -1;
+                return std::make_pair(false, modifiedFMTITalker);
+            } else {
+                check.push_back(checkValue);
+            }
+        } else {
+            check.push_back(checkValue);
+        }
+    }
+
+    return std::make_pair(true, modifiedFMTITalker);
+}
+
+// The runBAS function
+
+std::tuple<bool, std::vector<FlowData>, std::map<std::vector<int>, std::vector<FlowData>>> runBAS(const std::vector<std::string>& flowIdRecord, const std::vector<std::vector<int>>& routes, const std::vector<int>& srcdst, const std::vector<int>& esflow, const std::vector<int>& qos_ns, const std::string& gclname) {
+    clearVars();
+    int pos = 0;
+    std::map<int, int> reverse_lookup;
+    for (size_t i = 0; i < srcdst.size(); ++i) {
+        reverse_lookup[srcdst[i]] = i;
+    }
+
+    // Print the reverse_lookup map
+    std::cout << "\n\n";
+    for (const auto& pair : reverse_lookup) {
+        std::cout << pair.first << ": " << pair.second << ", ";
+    }
+    std::cout << std::endl;
+
+    SubNetworkType subN;
+    for (const auto& sp : routes) {
+        subN = TopologyPartition(sp, srcdst, pos, qos_ns, reverse_lookup, flowIdRecord);
+        pos++;
+    }
+
+    std::vector<int> FMTItalker = step1andstep2_CalculateRelatedParameters(subN);
+
+    bool schedulingFlag = false;
+    int cnt = 1;
+    std::vector<FlowData> talkerResults;
+    while (!schedulingFlag) {
+        bool error;
+        std::tie(error, FMTItalker, egressFlowset);// = step3_AllocateFlowtoSlot(egressFlowset, egressTimeset, FMTItalker, gclname);
+        if (error) {
+            return std::make_tuple(false, talkerResults, egressFlowset);
+        }
+        std::tie(schedulingFlag, FMTItalker) = CheckConflict(FMTItalker, esflow, cnt);
+        cnt++;
+    }
+
+    flowVarsForEgress(Flowset);
+    return std::make_tuple(true, talkerResults, egressFlowset);
+}
+
+
+int test_funtions() {
 	
 /*** for test TopologyPartition ***/
     // Example data for the function call
@@ -333,6 +425,35 @@ int main() {
 
     std::cout << "LenTSinTCI: " << result.first << ", arriveTSatCurrentSW: " << result.second << std::endl;
 
+
+    return 0;
+}
+
+int main() {
+    // Example usage of runBAS
+    std::vector<std::string> webflowIdRecord = {
+        "26:5f:14:7b:2a:0a-aa:00:00:00:00:12-01",
+        "aa:00:00:00:00:11-26:5f:14:7b:2a:0a-01",
+        "aa:00:00:00:00:11-aa:00:00:00:00:12-01"
+    };
+    std::vector<std::vector<int>> webroutes = {{1, 2}, {3, 1}, {3, 1, 2}};
+    std::vector<int> webSrcDst = {3, 1, 2};
+    std::vector<int> webflowSrcMap = {-1, -2, -2};
+    std::vector<int> webqos = {2000000, 2000000, 2000000};
+    std::string gclname = "gcl0913";
+
+    // Call runBAS with the example data
+    
+    std::tuple<bool, std::vector<FlowData>, std::map<std::vector<int>, std::vector<FlowData>>> result;
+    	
+    result = runBAS(webflowIdRecord, webroutes, webSrcDst, webflowSrcMap, webqos, gclname);
+    
+    // You need to implement runBAS and uncomment the above line
+
+    // Print GCL (you need to define what GCL is and how it should be printed)
+    // std::cout << GCL << std::endl;
+    
+    test_funtions();
 
     return 0;
 }
