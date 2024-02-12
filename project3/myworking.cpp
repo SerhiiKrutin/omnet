@@ -24,9 +24,9 @@ std::map<std::vector<int>, std::vector<TimeData>> Timeset;
 
 
 using AllocationData = std::vector<std::tuple<std::string, int, int>>;
-std::map<std::string, AllocationData> allocationTS;
-std::map<std::string, std::vector<std::tuple<int, std::string>>> talkerResults;
-std::map<int, std::vector<std::string>> GCL;
+std::map<std::vector<int>, AllocationData> allocationTS;
+std::map<std::vector<int>, std::vector<std::tuple<int, std::string>>> talkerResults;
+std::map<std::vector<int>, std::vector<std::string>> GCL;
 
 
 // Assuming the existence of these types based on the Python code
@@ -257,7 +257,7 @@ void clearVars() {
 }
 
 
-void GenerateGCLs(int ArrivedTimeInstance, int tdi, int numTDI, int tstcd, int egress, const std::string& gclname) {
+void GenerateGCLs(int ArrivedTimeInstance, int tdi, int numTDI, int tstcd, const std::vector<int>& egress, const std::string& gclname) {
     const int GB_interval = 12240;
     const std::string GateState_TSN = "10000000";
     const std::string GateState_BE = "01111111";
@@ -289,7 +289,7 @@ void GenerateGCLs(int ArrivedTimeInstance, int tdi, int numTDI, int tstcd, int e
     GCL[egress].push_back(gclStream.str());
 }
 
-std::tuple<std::vector<int>, std::map<std::string, AllocationData>, std::map<std::string, std::vector<std::tuple<int, std::string>>>> step3_AllocateFlowtoSlot(std::map<std::vector<int>, std::vector<FlowData>> Flow, std::map<std::vector<int>, std::vector<TimeData>> Time, std::vector<int>& FMTItalker, const std::string& gclname) {
+std::tuple<std::vector<int>, std::map<std::vector<int>, AllocationData>, std::map<std::vector<int>, std::vector<std::tuple<int, std::string>>>> step3_AllocateFlowtoSlot(std::map<std::vector<int>, std::vector<FlowData>> Flow, std::map<std::vector<int>, std::vector<TimeData>> Time, std::vector<int>& FMTItalker, const std::string& gclname) {
     std::vector<int> avaliableTS;
     bool conflict = false;
     int FMTISW, ntci1, ntci2;
@@ -317,9 +317,93 @@ std::tuple<std::vector<int>, std::map<std::string, AllocationData>, std::map<std
             int requireNumTS = qos / tsai;
             int allocationOffset = tstcd * k;
 
-            // ... (The rest of the code follows the logic of the Python function)
-            // You will need to translate the rest of the Python code into C++,
-            // handling the allocation logic, conflict detection, and GCL generation.
+            std::cout << "\nFlow is " << flowId << ", tsai is " << tsai << ", tdi is " << tdi
+              << ", hyperiod is " << hyperPeriod << ", qos is " << qos
+              << ", requireNumTS is " << requireNumTS << ", allocationOffset is "
+              << allocationOffset << ", k is " << k << std::endl;
+
+		    auto it = std::find(avaliableTS.begin(), avaliableTS.end(), -1);
+		    if (it == avaliableTS.end()) {
+		        std::cerr << "debug: avaliableTS is full, avaliableNumTS is " << avaliableNumTS << std::endl;
+		        return std::make_tuple(std::vector<int>{-1}, std::map<std::vector<int>, AllocationData>{}, std::map<std::vector<int>, std::vector<std::tuple<int, std::string>>>{});
+		        //return std::make_tuple(FMTItalker, allocationTS, talkerResults);
+		    }
+		    int firstAvaliableTS = std::distance(avaliableTS.begin(), it);
+
+		    int indexFlow = id - 1;
+		    int fmtitalker = 0;
+		    int fmtitalkerFlg = FMTItalker[indexFlow];
+
+		    // Conflict of fmtitalker occurs.
+		    if (fmtitalkerFlg < 0) {
+		        conflict = true;
+		        firstAvaliableTS -= fmtitalkerFlg; // Move backward -fmtitalkerFlg slot
+		        fmtitalkerFlg = 1;
+		    }
+
+		    int stdin = firstAvaliableTS / tstcd;
+		    int ssn = firstAvaliableTS % tstcd;
+
+		    if (flagFirstMsg) {
+			    int FMTISW = 20740 * hop; // The start-instance of the first TSN message is equal to 0.
+			    if (conflict) {
+			        FMTISW = 20740 * hop + stdin * tdi + ssn * 12336; // If transmission conflict occurs, the first messages should be delayed to transmit.
+			    }
+			    int ntci1 = 20740 * hop - 12240;
+			    int ntci2 = tdi - ntci1 - tci - 12240;
+
+			    if (ntci2 < 0) {
+			        std::cerr << "Error, Break the stable condition, please reduce TSN traffic in sub-network " << egress[0] << std::endl;
+			        std::cerr << "Dump: flow id is " << id << ", qos is " << qos << ", tdi is " << tdi
+			                  << ", tci is " << tci << ", ntci1 is " << ntci1 << ", ntci2 is " << ntci2 << std::endl;
+			        return std::make_tuple(std::vector<int>{-1}, std::map<std::vector<int>, AllocationData>{}, std::map<std::vector<int>, std::vector<std::tuple<int, std::string>>>{});
+			    } else {
+			        flagFirstMsg = false;
+			        if (GCL.find(egress) == GCL.end()) {
+			            GenerateGCLs(FMTISW, tdi, numtdi, tstcd, egress, gclname);
+			        }
+			    }
+			} else {
+			    int maxdelay = hop * 20740;
+			    int FMTISW = stdin * tdi + ntci1 + 12240 + ssn * 12336;
+			    while (maxdelay > FMTISW) {
+			        firstAvaliableTS++;
+			        if (firstAvaliableTS >= avaliableNumTS) {
+			            std::cerr << "Error, there are not enough time slots" << std::endl;
+			            std::cerr << "Egress is " << egress[0] << ", flow is " << id << ", firstAvaTS is " << firstAvaliableTS << ", avanumTS is " << avaliableNumTS << std::endl;
+			            return std::make_tuple(std::vector<int>{-1}, std::map<std::vector<int>, AllocationData>{}, std::map<std::vector<int>, std::vector<std::tuple<int, std::string>>>{});
+			        }
+			        stdin = firstAvaliableTS / tstcd;
+			        ssn = firstAvaliableTS % tstcd;
+			        FMTISW = stdin * tdi + ntci1 + 12240 + ssn * 12336;
+			    }
+			}
+
+			if (fmtitalkerFlg == 1) {
+			    int fmtitalker = FMTISW - hop * 20740;
+			    if (fmtitalker < 0) {
+			        std::cerr << "Error occurs, egress is " << egress[0] << ", flow is " << id << ", fmtisw is " << FMTISW << " hop is " << hop << std::endl;
+			    }
+			    FMTItalker[indexFlow] = fmtitalker; // Constrained by 's algorithm, 12336 is the transmission duration of maximum-size TSN frame
+			    talkerResults[egress].push_back(std::make_tuple(fmtitalker, flowId)); // [fmtitalker, flowId]
+			}
+
+		    // ... (Continue translating the Python code into C++)
+
+		    // The following codes are used for debug, without the below information, GCL can be calculated successfully.
+		    int allocationCNT = 0;
+		    while (allocationCNT < requireNumTS) {
+		        allocationCNT++;
+		        if (firstAvaliableTS >= avaliableTS.size()) {
+		            std::cerr << "There is no enough time-slot for flow " << id << ", in egress " << egress[0] << std::endl;
+		            continue;
+		        }
+		        avaliableTS[firstAvaliableTS] = id;
+		        allocationTS[egress].push_back(std::make_tuple(flowId, firstAvaliableTS, tstcd));
+
+		        firstAvaliableTS += allocationOffset;
+		    }
+
         }
     }
 
@@ -391,7 +475,7 @@ std::pair<bool, std::vector<int>> CheckConflict(const std::vector<int>& FMTITalk
 }
 
 // The runBAS function
-std::tuple<bool, std::map<std::string, std::vector<std::tuple<int, std::string>>>, std::map<std::vector<int>, std::vector<FlowData>>> runBAS(const std::vector<std::string>& flowIdRecord, const std::vector<std::vector<int>>& routes, const std::vector<int>& srcdst, const std::vector<int>& esflow, const std::vector<int>& qos_ns, const std::string& gclname) {
+std::tuple<bool, std::map<std::vector<int>, std::vector<std::tuple<int, std::string>>>, std::map<std::vector<int>, std::vector<FlowData>>> runBAS(const std::vector<std::string>& flowIdRecord, const std::vector<std::vector<int>>& routes, const std::vector<int>& srcdst, const std::vector<int>& esflow, const std::vector<int>& qos_ns, const std::string& gclname) {
     clearVars();
     int pos = 0;
     std::map<int, int> reverse_lookup;
