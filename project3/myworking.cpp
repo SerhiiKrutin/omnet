@@ -2,10 +2,19 @@
 #include <map>
 #include <tuple>
 #include <iostream>
+#include <cmath>
+#include <queue>
+#include <functional>
+#include <algorithm>
+#include <string>
+#include <sstream>
 
 // Define a custom type for the flow data
-using FlowData = std::tuple<int, int, int, int, int, int>;
-using TimeData = std::tuple<int, int, int, int>;
+using SubnetData = std::tuple<int, int, int, int>; // qos, id, hop, flowId
+
+using TimeData = std::tuple<int, int, int, int>; // tsai, tdi, tstcd, tci
+
+using FlowData = std::tuple<int, int, int, int, int, int>; // hop, id, qos, k, tsai, flowId
 
 // Define the maps to hold vectors of flows and times
 std::map<std::string, std::vector<FlowData>> egressFlowset;
@@ -13,11 +22,15 @@ std::map<std::string, std::vector<TimeData>> egressTimeset;
 std::map<std::string, std::vector<FlowData>> Flowset;
 std::map<std::string, std::vector<TimeData>> Timeset;
 
-using SubNetworkType = std::map<std::vector<int>, std::vector<std::tuple<int, int, int, int>>>;
+using SubNetworkType = std::map<std::string, std::vector<SubnetData>>;
+
+std::map<int, std::vector<std::vector<int>>> allocationTS;
+std::map<int, std::vector<std::vector<int>>> talkerResults;
+std::map<int, std::vector<std::string>> GCL;
 
 // Assuming the existence of these types based on the Python code
 using FlowIdRecord = std::map<int, int>;
-using ShortestPathType = std::vector<int>;
+using ShortestPathType = std::string;
 using SrcDstType = std::vector<int>;
 using QosType = std::vector<int>;
 using ReverseLookupType = std::map<int, int>;
@@ -100,7 +113,7 @@ std::pair<int, int> DelayCalculation(int HopCnt) {
 }
 
 void assignToEgress(const std::map<std::string, std::vector<FlowData>>& Flowset,
-                    const std::map<std::string, std::vector<TimeData>>& Timeset) {
+const std::map<std::string, std::vector<TimeData>>& Timeset) {
     
     for (const auto& pair : Flowset) {
         const std::string& sn = pair.first;
@@ -151,6 +164,139 @@ void flowVarsForEgress(const std::map<std::string, std::vector<FlowData>>& Flows
             }
         }
     }
+}
+
+std::vector<int> step1andstep2_CalculateRelatedParameters(const SubNetworkType& subnetwork) {
+    int numFlow = 0;
+    for (const auto& entry : subnetwork) {
+        const std::string& sn = entry.first;
+        auto flow = entry.second; // Copy the flow set
+
+        // Convert flow list to flow heap
+        std::priority_queue<SubnetData, std::vector<SubnetData>, std::greater<SubnetData>> flowHeap(flow.begin(), flow.end());
+
+        // Assuming flowHeap is not empty and has at least one element
+        int tdi = std::get<0>(flowHeap.top()); // Get the smallest qos to be TDI
+
+        int lenFlow = flow.size();
+        double atstcd = 0.0; // The average number of time slot allocated in TCI
+
+        while (!flowHeap.empty()) {
+            SubnetData flowData = flowHeap.top();
+            flowHeap.pop();
+            int qos = std::get<0>(flowData);
+            int id = std::get<1>(flowData);
+            int hop = std::get<2>(flowData);
+            int flowId = std::get<3>(flowData);
+
+            if (numFlow <= id) {
+                numFlow = id;
+            }
+
+            int x = qos / tdi; // Floor division
+            int k = static_cast<int>(std::pow(2, std::floor(std::log2(x))));
+            int tsai = k * tdi;
+            atstcd += static_cast<double>(tdi) / tsai;
+
+            
+            Flowset[sn].push_back({hop, id, qos, k, tsai, flowId});
+            
+            if (!flow.empty()) { // All flows are traversed
+	            int tstcd = std::ceil(atstcd);
+	            int tci = tstcd * 12336;
+	            Timeset[sn].push_back({tsai, tdi, tstcd, tci}); // At this time tsai is the max(tsai), thus is equal to the hyper period
+	        }
+        }
+
+        
+    }
+
+    // Flowset contains all flow information, Timeset contains all time-related information for an egress
+    assignToEgress(Flowset, Timeset); // Sub-network might contain many switches, this function breaks subNetwork to two adjacency switch set
+
+    std::vector<int> FMTItalker(numFlow, 1);
+    return FMTItalker;
+}
+
+void clearVars() {
+    // Assuming flowSrcDst, talkerResults, TStoflow, GCL are defined elsewhere
+    flowSrcDst.clear();
+    talkerResults.clear();
+    allocationTS.clear();
+    egressFlowset.clear();
+    egressTimeset.clear();
+    Flowset.clear();
+    Timeset.clear();
+    subNetwork.clear();
+    //TStoflow.clear();
+    GCL.clear();
+}
+
+
+void GenerateGCLs(int ArrivedTimeInstance, int tdi, int numTDI, int tstcd, int egress, const std::string& gclname) {
+    const int GB_interval = 12240;
+    const std::string GateState_TSN = "10000000";
+    const std::string GateState_BE = "01111111";
+    const std::string GateState_GB = "00000000";
+
+    int GCL_len = numTDI * 3;
+    int TSN_interval = tstcd * 12336;
+    int BE_interval = tdi - TSN_interval - GB_interval;
+
+    int first_interval = ArrivedTimeInstance - GB_interval;
+    int last_interval = BE_interval - first_interval;
+
+    std::ostringstream gclStream;
+    gclStream << "hyperPeriod    " << tdi * numTDI << "\n"
+              << "numOfEntries    " << GCL_len << "\n"
+              << GateState_BE << "    " << first_interval << "\n";
+
+    for (int i = 1; i < numTDI; ++i) {
+        gclStream << GateState_GB << "    " << GB_interval << "\n"
+                  << GateState_TSN << "    " << TSN_interval << "\n"
+                  << GateState_BE << "    " << BE_interval << "\n";
+    }
+
+    gclStream << GateState_GB << "    " << GB_interval << "\n"
+              << GateState_TSN << "    " << TSN_interval << "\n"
+              << GateState_BE << "    " << last_interval << "\n";
+
+    // Add the generated GCL string to the GCL map
+    GCL[egress].push_back(gclStream.str());
+}
+
+std::vector<int> convertStrToVector(const std::string& strdata, int flag) {
+    std::vector<int> element;
+    std::istringstream iss(strdata);
+    std::string token;
+
+    if (flag == 1) {
+        while (getline(iss, token, ',')) {
+            if (!token.empty() && token[0] != '[' && token[token.size() - 1] != ']') {
+                element.push_back(std::stoi(token));
+            }
+        }
+    } else if (flag == 2) {
+        std::vector<std::vector<int>> subelement;
+        while (getline(iss, token, ']')) {
+            if (!token.empty()) {
+                std::istringstream inner_iss(token.substr(1)); // Skip the '['
+                std::vector<int> inner_element;
+                std::string inner_token;
+                while (getline(inner_iss, inner_token, ',')) {
+                    if (!inner_token.empty()) {
+                        inner_element.push_back(std::stoi(inner_token));
+                    }
+                }
+                subelement.push_back(inner_element);
+            }
+        }
+        // Assuming you want to flatten the 2D vector into a 1D vector
+        for (const auto& vec : subelement) {
+            element.insert(element.end(), vec.begin(), vec.end());
+        }
+    }
+    return element;
 }
 
 
