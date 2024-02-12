@@ -22,9 +22,12 @@ std::map<std::vector<int>, std::vector<TimeData>> egressTimeset;
 std::map<std::vector<int>, std::vector<FlowData>> Flowset;
 std::map<std::vector<int>, std::vector<TimeData>> Timeset;
 
-std::map<int, std::vector<std::vector<int>>> allocationTS;
-std::map<int, std::vector<std::vector<int>>> talkerResults;
+
+using AllocationData = std::vector<std::tuple<std::string, int, int>>;
+std::map<std::string, AllocationData> allocationTS;
+std::map<std::string, std::vector<std::tuple<int, std::string>>> talkerResults;
 std::map<int, std::vector<std::string>> GCL;
+
 
 // Assuming the existence of these types based on the Python code
 using FlowIdRecord = std::vector<std::string>;
@@ -286,6 +289,44 @@ void GenerateGCLs(int ArrivedTimeInstance, int tdi, int numTDI, int tstcd, int e
     GCL[egress].push_back(gclStream.str());
 }
 
+std::tuple<std::vector<int>, std::map<std::string, AllocationData>, std::map<std::string, std::vector<std::tuple<int, std::string>>>> step3_AllocateFlowtoSlot(std::map<std::vector<int>, std::vector<FlowData>> Flow, std::map<std::vector<int>, std::vector<TimeData>> Time, std::vector<int>& FMTItalker, const std::string& gclname) {
+    std::vector<int> avaliableTS;
+    bool conflict = false;
+    int FMTISW, ntci1, ntci2;
+    bool flagFirstMsg = true;
+    
+    for (const auto& [egress, flow] : Flow) {
+    	std::vector<TimeData> timeVector = Time[egress];
+		TimeData timeData = timeVector[0]; // Access the first element of timeVector
+        int hyperPeriod = std::get<0>(timeData);
+        int tdi = std::get<1>(timeData);
+        int tstcd = std::get<2>(timeData);
+        int tci = std::get<3>(timeData);
+
+        int numtdi = hyperPeriod / tdi;
+        int avaliableNumTS = tstcd * numtdi;
+        avaliableTS.assign(avaliableNumTS, -1); // Initialize with -1 indicating available
+
+        std::vector<FlowData> sortedlist = flow;
+        std::sort(sortedlist.begin(), sortedlist.end(), [](const FlowData& a, const FlowData& b) {
+            return std::get<2>(a) < std::get<2>(b); // Sort by qos
+        });
+
+        for (const auto& i : sortedlist) {
+            auto [hop, id, qos, k, tsai, flowId] = i; // Unpack the FlowData tuple
+            int requireNumTS = qos / tsai;
+            int allocationOffset = tstcd * k;
+
+            // ... (The rest of the code follows the logic of the Python function)
+            // You will need to translate the rest of the Python code into C++,
+            // handling the allocation logic, conflict detection, and GCL generation.
+        }
+    }
+
+    // Return the updated FMTItalker, allocationTS, and talkerResults
+    return std::make_tuple(FMTItalker, allocationTS, talkerResults);
+}
+
 std::vector<int> convertStrToVector(const std::string& strdata, int flag) {
     std::vector<int> element;
     std::istringstream iss(strdata);
@@ -350,8 +391,7 @@ std::pair<bool, std::vector<int>> CheckConflict(const std::vector<int>& FMTITalk
 }
 
 // The runBAS function
-
-std::tuple<bool, std::vector<FlowData>, std::map<std::vector<int>, std::vector<FlowData>>> runBAS(const std::vector<std::string>& flowIdRecord, const std::vector<std::vector<int>>& routes, const std::vector<int>& srcdst, const std::vector<int>& esflow, const std::vector<int>& qos_ns, const std::string& gclname) {
+std::tuple<bool, std::map<std::string, std::vector<std::tuple<int, std::string>>>, std::map<std::vector<int>, std::vector<FlowData>>> runBAS(const std::vector<std::string>& flowIdRecord, const std::vector<std::vector<int>>& routes, const std::vector<int>& srcdst, const std::vector<int>& esflow, const std::vector<int>& qos_ns, const std::string& gclname) {
     clearVars();
     int pos = 0;
     std::map<int, int> reverse_lookup;
@@ -374,15 +414,20 @@ std::tuple<bool, std::vector<FlowData>, std::map<std::vector<int>, std::vector<F
 
     std::vector<int> FMTItalker = step1andstep2_CalculateRelatedParameters(subN);
 
+    
     bool schedulingFlag = false;
     int cnt = 1;
-    std::vector<FlowData> talkerResults;
+
     while (!schedulingFlag) {
-        bool error;
-        std::tie(error, FMTItalker, egressFlowset);// = step3_AllocateFlowtoSlot(egressFlowset, egressTimeset, FMTItalker, gclname);
-        if (error) {
-            return std::make_tuple(false, talkerResults, egressFlowset);
+        // Call step3_AllocateFlowtoSlot and unpack the returned tuple
+        std::tie(FMTItalker, allocationTS, talkerResults) = step3_AllocateFlowtoSlot(egressFlowset, egressTimeset, FMTItalker, gclname);
+
+        // Check for error condition
+        if (!FMTItalker.empty() && FMTItalker[0] < 0 /*== "error"*/) {
+            return std::make_tuple(false, talkerResults, egressFlowset); // Replace with appropriate error handling
         }
+
+        // Call CheckConflict and unpack the returned pair
         std::tie(schedulingFlag, FMTItalker) = CheckConflict(FMTItalker, esflow, cnt);
         cnt++;
     }
@@ -443,10 +488,10 @@ int main() {
     std::string gclname = "gcl0913";
 
     // Call runBAS with the example data
-    
-    std::tuple<bool, std::vector<FlowData>, std::map<std::vector<int>, std::vector<FlowData>>> result;
-    	
-    result = runBAS(webflowIdRecord, webroutes, webSrcDst, webflowSrcMap, webqos, gclname);
+    //std::tuple<bool, std::map<std::string, std::vector<std::tuple<int, std::string>>>, std::map<std::vector<int>, std::vector<FlowData>>>
+    //std::tuple<bool, std::vector<FlowData>, std::map<std::vector<int>, std::vector<FlowData>>> result;
+    bool flagl;
+    std::tie(flagl, talkerResults, egressFlowset) = runBAS(webflowIdRecord, webroutes, webSrcDst, webflowSrcMap, webqos, gclname);
     
     // You need to implement runBAS and uncomment the above line
 
