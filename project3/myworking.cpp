@@ -47,7 +47,7 @@ FlowSrcDstType flowSrcDst;
 // Define the maps to hold vectors of flows and times
 //extern std::map<std::vector<int>, std::vector<SubnetData>> subNetwork;
 //extern std::map<std::string, std::vector<int>> flowSrcDst;
-	
+    
 // Assuming userDefined is a global or externally provide4d variable
 bool userDefined = true; // You can change this to false to test the other condition
 
@@ -84,6 +84,15 @@ std::map<std::vector<int>, std::vector<SubnetData>> TopologyPartition(
     int startIndex = 0;
     int lenDictb = reverse_lookup.size();
     for (size_t i = 0; i < ShortestPath.size(); ++i) {
+        
+        /*std::cout<< "Shortest is [";
+        for (const auto& element : ShortestPath) {
+            std::cout << element << ", ";
+        }
+        std::cout <<"], ";
+
+        printf("index is %lu, X is %d\n",i,ShortestPath[i]);*/
+        
         if (i == 0) {
             continue;
         }
@@ -152,7 +161,7 @@ const std::map<std::vector<int>, std::vector<TimeData>>& Timeset) {
             std::vector<int> egress;
             for (size_t cnt = 0; cnt < lensn - 1; ++cnt) {
                 egress.push_back(sn[cnt]);
-				egress.push_back(sn[cnt + 1]);
+                egress.push_back(sn[cnt + 1]);
                 for (const auto& f : flow) {
                     // Create a modified flow data with incremented hop
                     FlowData modifiedFlow = f;
@@ -181,7 +190,7 @@ void flowVarsForEgress(const std::map<std::vector<int>, std::vector<FlowData>>& 
             std::vector<int> egress;
             for (size_t cnt = 0; cnt < lensn - 1; ++cnt) {
                 egress.push_back(sn[cnt]);
-				egress.push_back(sn[cnt + 1]);
+                egress.push_back(sn[cnt + 1]);
                 for (const auto& f : flow) {
                     egressFlowset[egress].push_back(f);
                 }
@@ -225,11 +234,15 @@ std::vector<int> step1andstep2_CalculateRelatedParameters(const SubNetworkType& 
             
             Flowset[sn].push_back({hop, id, qos, k, tsai, flowId});
             
-            if (!flow.empty()) { // All flows are traversed
-	            int tstcd = std::ceil(atstcd);
-	            int tci = tstcd * 12336;
-	            Timeset[sn].push_back({tsai, tdi, tstcd, tci}); // At this time tsai is the max(tsai), thus is equal to the hyper period
-	        }
+            //printf(" Flowset:: %d,%d,%d,%d,%d,", hop, id, qos, k, tsai);
+            //std::cout << flowId << std::endl;
+            
+            if (flowHeap.empty()) { // All flows are traversed
+                int tstcd = std::ceil(atstcd);
+                int tci = tstcd * 12336;
+                Timeset[sn].push_back({tsai, tdi, tstcd, tci}); // At this time tsai is the max(tsai), thus is equal to the hyper period
+                //printf(" Timeset:: %d,%d,%d,%d\n",tsai, tdi, tstcd, tci);
+            }
         }
 
         
@@ -285,19 +298,21 @@ void GenerateGCLs(int ArrivedTimeInstance, int tdi, int numTDI, int tstcd, const
               << GateState_TSN << "    " << TSN_interval << "\n"
               << GateState_BE << "    " << last_interval << "\n";
 
+    //std::cout << gclStream.str();
+
     // Add the generated GCL string to the GCL map
     GCL[egress].push_back(gclStream.str());
 }
 
 std::tuple<std::vector<int>, std::map<std::vector<int>, AllocationData>, std::map<std::vector<int>, std::vector<std::tuple<int, std::string>>>> step3_AllocateFlowtoSlot(std::map<std::vector<int>, std::vector<FlowData>> Flow, std::map<std::vector<int>, std::vector<TimeData>> Time, std::vector<int>& FMTItalker, const std::string& gclname) {
-    std::vector<int> avaliableTS;
-    bool conflict = false;
-    int FMTISW, ntci1, ntci2;
-    bool flagFirstMsg = true;
     
     for (const auto& [egress, flow] : Flow) {
-    	std::vector<TimeData> timeVector = Time[egress];
-		TimeData timeData = timeVector[0]; // Access the first element of timeVector
+        std::vector<int> avaliableTS;
+        bool conflict = false;
+        int FMTISW, ntci1, ntci2;
+        bool flagFirstMsg = true;
+        std::vector<TimeData> timeVector = Time[egress];
+        TimeData timeData = timeVector[0]; // Access the first element of timeVector
         int hyperPeriod = std::get<0>(timeData);
         int tdi = std::get<1>(timeData);
         int tstcd = std::get<2>(timeData);
@@ -314,6 +329,8 @@ std::tuple<std::vector<int>, std::map<std::vector<int>, AllocationData>, std::ma
 
         for (const auto& i : sortedlist) {
             auto [hop, id, qos, k, tsai, flowId] = i; // Unpack the FlowData tuple
+            //std::cout << " *** " << hop << ", " << id << ", " << qos << ", " << k << ", " << tsai << ", " << flowId << std::endl;
+        
             int requireNumTS = qos / tsai;
             int allocationOffset = tstcd * k;
 
@@ -322,87 +339,103 @@ std::tuple<std::vector<int>, std::map<std::vector<int>, AllocationData>, std::ma
               << ", requireNumTS is " << requireNumTS << ", allocationOffset is "
               << allocationOffset << ", k is " << k << std::endl;
 
-		    auto it = std::find(avaliableTS.begin(), avaliableTS.end(), -1);
-		    if (it == avaliableTS.end()) {
-		        std::cerr << "debug: avaliableTS is full, avaliableNumTS is " << avaliableNumTS << std::endl;
-		        return std::make_tuple(std::vector<int>{-1}, std::map<std::vector<int>, AllocationData>{}, std::map<std::vector<int>, std::vector<std::tuple<int, std::string>>>{});
-		        //return std::make_tuple(FMTItalker, allocationTS, talkerResults);
-		    }
-		    int firstAvaliableTS = std::distance(avaliableTS.begin(), it);
+            auto it = std::find(avaliableTS.begin(), avaliableTS.end(), -1);
+            if (it == avaliableTS.end()) {
+                std::cerr << "debug: avaliableTS is full, avaliableNumTS is " << avaliableNumTS << std::endl;
+                return std::make_tuple(std::vector<int>{-1}, std::map<std::vector<int>, AllocationData>{}, std::map<std::vector<int>, std::vector<std::tuple<int, std::string>>>{});
+                //return std::make_tuple(FMTItalker, allocationTS, talkerResults);
+            }
+            int firstAvaliableTS = std::distance(avaliableTS.begin(), it);
 
-		    int indexFlow = id - 1;
-		    int fmtitalker = 0;
-		    int fmtitalkerFlg = FMTItalker[indexFlow];
+            int indexFlow = id - 1;
+            int fmtitalker = 0;
+            int fmtitalkerFlg = FMTItalker[indexFlow];
 
-		    // Conflict of fmtitalker occurs.
-		    if (fmtitalkerFlg < 0) {
-		        conflict = true;
-		        firstAvaliableTS -= fmtitalkerFlg; // Move backward -fmtitalkerFlg slot
-		        fmtitalkerFlg = 1;
-		    }
+            // Conflict of fmtitalker occurs.
+            if (fmtitalkerFlg < 0) {
+                conflict = true;
+                firstAvaliableTS -= fmtitalkerFlg; // Move backward -fmtitalkerFlg slot
+                fmtitalkerFlg = 1;
+            }
 
-		    int stdin = firstAvaliableTS / tstcd;
-		    int ssn = firstAvaliableTS % tstcd;
+            int stdin = firstAvaliableTS / tstcd;
+            int ssn = firstAvaliableTS % tstcd;
 
-		    if (flagFirstMsg) {
-			    int FMTISW = 20740 * hop; // The start-instance of the first TSN message is equal to 0.
-			    if (conflict) {
-			        FMTISW = 20740 * hop + stdin * tdi + ssn * 12336; // If transmission conflict occurs, the first messages should be delayed to transmit.
-			    }
-			    int ntci1 = 20740 * hop - 12240;
-			    int ntci2 = tdi - ntci1 - tci - 12240;
+            if (flagFirstMsg) {
+                FMTISW = 20740 * hop; // The start-instance of the first TSN message is equal to 0.
+                if (conflict) {
+                    FMTISW = 20740 * hop + stdin * tdi + ssn * 12336; // If transmission conflict occurs, the first messages should be delayed to transmit.
+                }
+                ntci1 = 20740 * hop - 12240;
+                ntci2 = tdi - ntci1 - tci - 12240;
 
-			    if (ntci2 < 0) {
-			        std::cerr << "Error, Break the stable condition, please reduce TSN traffic in sub-network " << egress[0] << std::endl;
-			        std::cerr << "Dump: flow id is " << id << ", qos is " << qos << ", tdi is " << tdi
-			                  << ", tci is " << tci << ", ntci1 is " << ntci1 << ", ntci2 is " << ntci2 << std::endl;
-			        return std::make_tuple(std::vector<int>{-1}, std::map<std::vector<int>, AllocationData>{}, std::map<std::vector<int>, std::vector<std::tuple<int, std::string>>>{});
-			    } else {
-			        flagFirstMsg = false;
-			        if (GCL.find(egress) == GCL.end()) {
-			            GenerateGCLs(FMTISW, tdi, numtdi, tstcd, egress, gclname);
-			        }
-			    }
-			} else {
-			    int maxdelay = hop * 20740;
-			    int FMTISW = stdin * tdi + ntci1 + 12240 + ssn * 12336;
-			    while (maxdelay > FMTISW) {
-			        firstAvaliableTS++;
-			        if (firstAvaliableTS >= avaliableNumTS) {
-			            std::cerr << "Error, there are not enough time slots" << std::endl;
-			            std::cerr << "Egress is " << egress[0] << ", flow is " << id << ", firstAvaTS is " << firstAvaliableTS << ", avanumTS is " << avaliableNumTS << std::endl;
-			            return std::make_tuple(std::vector<int>{-1}, std::map<std::vector<int>, AllocationData>{}, std::map<std::vector<int>, std::vector<std::tuple<int, std::string>>>{});
-			        }
-			        stdin = firstAvaliableTS / tstcd;
-			        ssn = firstAvaliableTS % tstcd;
-			        FMTISW = stdin * tdi + ntci1 + 12240 + ssn * 12336;
-			    }
-			}
+                if (ntci2 < 0) {
+                    std::cerr << "Error, Break the stable condition, please reduce TSN traffic in sub-network " << egress[0] << std::endl;
+                    std::cerr << "Dump: flow id is " << id << ", qos is " << qos << ", tdi is " << tdi
+                              << ", tci is " << tci << ", ntci1 is " << ntci1 << ", ntci2 is " << ntci2 << std::endl;
+                    return std::make_tuple(std::vector<int>{-1}, std::map<std::vector<int>, AllocationData>{}, std::map<std::vector<int>, std::vector<std::tuple<int, std::string>>>{});
+                } else {
+                    flagFirstMsg = false;
 
-			if (fmtitalkerFlg == 1) {
-			    int fmtitalker = FMTISW - hop * 20740;
-			    if (fmtitalker < 0) {
-			        std::cerr << "Error occurs, egress is " << egress[0] << ", flow is " << id << ", fmtisw is " << FMTISW << " hop is " << hop << std::endl;
-			    }
-			    FMTItalker[indexFlow] = fmtitalker; // Constrained by 's algorithm, 12336 is the transmission duration of maximum-size TSN frame
-			    talkerResults[egress].push_back(std::make_tuple(fmtitalker, flowId)); // [fmtitalker, flowId]
-			}
+                    /*std::cout << " * ";
+                    for (const auto& element : egress) {
+                        std::cout << element << " ";
+                    }
+                    std::cout << std::endl;
 
-		    // ... (Continue translating the Python code into C++)
+                    for (const auto& egress : GCL) {
+                        std::cout << " @ " ;
+                        // Output the elements of the vector using a loop
+                        for (const auto& element : egress.first) {
+                            std::cout << element << " ";
+                        }
+                        std::cout << std::endl;
+                    }*/
+                    
+                    if (GCL.find(egress) == GCL.end()) {
+                        GenerateGCLs(FMTISW, tdi, numtdi, tstcd, egress, gclname);
+                    }
+                }
+            } else {
+                int maxdelay = hop * 20740;
+                FMTISW = stdin * tdi + ntci1 + 12240 + ssn * 12336;
+                while (maxdelay > FMTISW) {
+                    firstAvaliableTS++;
+                    if (firstAvaliableTS >= avaliableNumTS) {
+                        std::cerr << "Error, there are not enough time slots" << std::endl;
+                        std::cerr << "Egress is " << egress[0] << ", flow is " << id << ", firstAvaTS is " << firstAvaliableTS << ", avanumTS is " << avaliableNumTS << std::endl;
+                        return std::make_tuple(std::vector<int>{-1}, std::map<std::vector<int>, AllocationData>{}, std::map<std::vector<int>, std::vector<std::tuple<int, std::string>>>{});
+                    }
+                    stdin = firstAvaliableTS / tstcd;
+                    ssn = firstAvaliableTS % tstcd;
+                    FMTISW = stdin * tdi + ntci1 + 12240 + ssn * 12336;
+                }
+            }
 
-		    // The following codes are used for debug, without the below information, GCL can be calculated successfully.
-		    int allocationCNT = 0;
-		    while (allocationCNT < requireNumTS) {
-		        allocationCNT++;
-		        if (firstAvaliableTS >= avaliableTS.size()) {
-		            std::cerr << "There is no enough time-slot for flow " << id << ", in egress " << egress[0] << std::endl;
-		            continue;
-		        }
-		        avaliableTS[firstAvaliableTS] = id;
-		        allocationTS[egress].push_back(std::make_tuple(flowId, firstAvaliableTS, tstcd));
+            if (fmtitalkerFlg == 1) {
+                fmtitalker = FMTISW - hop * 20740;
+                if (fmtitalker < 0) {
+                    std::cerr << "Error occurs, egress is " << egress[0] << ", flow is " << id << ", fmtisw is " << FMTISW << " hop is " << hop << std::endl;
+                }
+                FMTItalker[indexFlow] = fmtitalker; // Constrained by 's algorithm, 12336 is the transmission duration of maximum-size TSN frame
+                talkerResults[egress].push_back(std::make_tuple(fmtitalker, flowId)); // [fmtitalker, flowId]
+            }
 
-		        firstAvaliableTS += allocationOffset;
-		    }
+            // ... (Continue translating the Python code into C++)
+
+            // The following codes are used for debug, without the below information, GCL can be calculated successfully.
+            int allocationCNT = 0;
+            while (allocationCNT < requireNumTS) {
+                allocationCNT++;
+                if (firstAvaliableTS >= avaliableTS.size()) {
+                    std::cerr << "There is no enough time-slot for flow " << id << ", in egress " << egress[0] << std::endl;
+                    continue;
+                }
+                avaliableTS[firstAvaliableTS] = id;
+                allocationTS[egress].push_back(std::make_tuple(flowId, firstAvaliableTS, tstcd));
+
+                firstAvaliableTS += allocationOffset;
+            }
 
         }
     }
@@ -522,7 +555,7 @@ std::tuple<bool, std::map<std::vector<int>, std::vector<std::tuple<int, std::str
 
 
 int test_funtions() {
-	
+    
 /*** for test TopologyPartition ***/
     // Example data for the function call
     ShortestPathType ShortestPath = {1, 2, 3, 4};
@@ -580,9 +613,20 @@ int main() {
     // You need to implement runBAS and uncomment the above line
 
     // Print GCL (you need to define what GCL is and how it should be printed)
-    // std::cout << GCL << std::endl;
-    
-    test_funtions();
+    //std::cout << GCL << std::endl;
+    for (const auto& egress : GCL) {
+        std::cout << "Egress: " ;
+        // Output the elements of the vector using a loop
+        for (const auto& element : egress.first) {
+            std::cout << element << " ";
+        }
+        std::cout << std::endl;
+        
+        for (const auto& gcl : egress.second) {
+            std::cout << gcl << std::endl;
+        }
+    }
+    //test_funtions();
 
     return 0;
 }
